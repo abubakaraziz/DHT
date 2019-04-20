@@ -5,6 +5,7 @@ import sys
 import pickle
 import json
 max_nodes=8
+fingertablesize=3
 
 #FLAGS
 #RQ=request
@@ -15,46 +16,48 @@ max_nodes=8
 class node:
     def __init__(self,successor,predecessor,data,fingertable,port):
         self.port=port       
-        self.data=data 
-        self.successor=successor 
-        self.successorport=None 
-        self.grandsuccessorkey=None 
-        self.grandsuccessorport=None
-        self.predecessor=predecessor 
-        self.predecessorport=None
+        self.data=[] 
         self.key=port%max_nodes
+        self.successor=self.key 
+        self.successorport=self.port
+        self.grandsuccessorkey=self.key
+        self.grandsuccessorport=self.key
+        self.predecessor=self.key 
+        self.predecessorport=self.port
+        self.fingertable=[]
 
     def print_values(self):
        print("Printing Node Values")
-       print("Port Number is ", self.port)
-          
-       print("Current Node Key is ", self.key)
-       
-       print("Successor  is ", self.successor)
-        
+       print("Port Number is ", self.port) 
+       print("Current Node Key is ", self.key) 
+       print("Successor  is ", self.successor) 
        print("Successor Port",self.successorport)         
-       print("Predecessor is ", self.predecessor)
-               
-       print("Predecessor Port is ", self.predecessorport)
        print("grandsuccesor",self.grandsuccessorkey)
        print("grandsuccessorport",self.grandsuccessorport)
-   
+       print("Predecessor is ", self.predecessor) 
+       print("Predecessor Port is ", self.predecessorport)
+    def print_fingertable(self):
+
+        print("Printing Finger Table of Node with key",self.key)
+        for i in range(fingertablesize):
+            print(self.fingertable[i])
+
     def FindSuccessor(self,message):
         print("Inside Find Successor") 
-        if self.successor==None:
+        if self.successor==self.key:
            message['found']="T"
            #message['successor']=str(self.successor)
            message['key']=str(self.key)
            message['port']=str(self.port) 
-           message['grandsuccessorport']=None
-        elif self.successor>int(message['otherkey']) and int(message['otherkey'])>self.key:     #otherkey refers to key of the requested node        
+           message['grandsuccessorport']=self.key
+        elif self.successor>int(message['otherkey']) and int(message['otherkey'])>=self.key:     #otherkey refers to key of the requested node        
            message['found']="T"
-           #message['successor']=str(self.successor)
+           
            message['key']=str(self.successor)
            message['port']=str(self.successorport)
            message['grandsuccessorport']=self.grandsuccessorport
            print("Found successor",message)
-        elif self.successor==0 and self.key<int(message['otherkey']):
+        elif self.successor==0 and self.key<=int(message['otherkey']):
            print("New node will be the last node in the ring")
            message['found']="T"
            #message['successor']=str(self.successor)
@@ -68,7 +71,8 @@ class node:
            message['key']=str(self.successor)
            message['port']=str(self.successorport)
            message['grandsuccessorport']=self.grandsuccessorport
-    
+   
+        print("messge from find successor", message)
 
         return message
 
@@ -82,11 +86,10 @@ class node:
         s.listen(10)  
         while True: 
             c, addr =s.accept()
-            print ("Received Request From",) 
-            print (c,addr)
             message=(c.recv(1024))
-            print("mesage",message)
-            message=json.loads(message.decode('ascii'))
+            message=json.loads(message.decode('ascii')) 
+            print("I am node with port",self.port, "I am have received message from", message["otherport"])
+            print("Complete message received", message)
             if message["type"]=="join":
                 message=self.FindSuccessor((message))
                 message['type']="reply" 
@@ -123,22 +126,50 @@ class node:
                 self.print_values()
                 print(message)
                 c.send(json.dumps(message).encode('ascii'))
-                  
-               
+            elif message["type"]=="getsuccessport":
+                 print("I am inside getsuccessport")
+                 print("I am node, ", self.port," and my successor is ",self.successorport)
+                 message["key"]=self.successor  #getting key of the successor
+                 message["port"]=self.successorport   #getting port of the successor              
+                 c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="nexthighestnodeid": 
+                print("I am trying to find successor for id:", message["otherkey"])
+                message=self.FindSuccessor((message))     
+                c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="buildfingertable":
+                print("Rebuilding fingertable for node with id", self.key)
+                self.build_fingertable(message)
+                c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="updategrand":
+                self.update_grandsuccessor(message)
+                c.send(json.dumps(message).encode('ascii'))
+                
+
+
+    def update_grandsuccessor(self,message):
+        print("Getting GrandSuccessor")
+        if self.successor!=self.key:
+            message["type"]="getsuccessport"
+            message["key"]=self.successor
+            message["port"]=self.successorport
+            message=self.sendmessage(message) 
+            self.grandsuccessorkey=int(message["key"])
+            self.grandsuccessorport=int(message["port"])
+        self.print_values()
+        return  
     
     def sendmessage(self,message):
         s=socket.socket() 
-         
+        print('I am node with port', self.port, 'sending message to port, ',message['port'], 'message type', message['type']) 
+        messagesentto=message['port']
         s.connect(('localhost',(int(message['port']))))
         s.send(json.dumps(message).encode('ascii'))
-        message=s.recv(1024)             #waiting for reply from requested node       
-        message=json.loads(message.decode('ascii'))
+        message=s.recv(1024)             #waiting for reply from requested node 
+        message=json.loads(message.decode('ascii')) 
+        print('received message from port :', messagesentto , 'message type', message['type']) 
         s.close()
         return message 
 
-
-        
-        
 
     #This checks for reply from the requested node join
     def reply(self,message):
@@ -168,7 +199,82 @@ class node:
              message['type']="join"
              return message 
 
-
+    def build_fingertable(self,message):
+        self.fingertable=[]
+        for i in range(fingertablesize): 
+            message['found']="F" 
+            eachentry={}
+            eachentry['range']=""
+            eachentry['successorkey']=""
+            eachentry['successorport']=""
+            message['key']=str(self.key) #starting node from where to look for the successor
+            message['port']=str(self.port) #starting port from where to look for the port
+            ranges=self.key+2**i
+            message['otherkey']=str(ranges)
+            while message['found']=="F":
+                print('sending message again')
+                print(message)
+                message['type']='nexthighestnodeid'
+                if message['key']==str(self.key):
+                    print("when i am equal to my key")
+                    message=self.FindSuccessor(message)
+                else:
+                    message=self.sendmessage(message)
+                    print("here")
+                    print(message)
+                if message['found']=="F":  #if successor is not found, search from successor 
+                    message['key']=message['key'] #key contains next successor node
+                    message['port']=message['port']
+            print("Finger table entry for id", ranges)
+            eachentry['range']=str(ranges)
+            print('message is', message)
+            eachentry['successorkey']=(message['key'] )
+            eachentry['successorport']=str(message['port'])         
+            self.fingertable.append(eachentry)
+        print("complete fingertable")
+        self.print_fingertable()
+    
+    def update_fingertables(self,message):
+        currentkey=str(self.key)
+        successor=str(self.successor)
+        print("current key is ", currentkey)
+        print("successor key is", successor)
+        successorport=str(self.successorport)
+        while currentkey!=successor: #if current key becomes equal to current key, all nodes are updated
+            message["key"]=str(successor) 
+            print(" Sending message to ",message["key"])
+            message["port"]=str(successorport) 
+            message["type"]="buildfingertable"
+            message=self.sendmessage(message)
+                       
+            print("Rebuilding of finger table for node with id",str(successor)," completed")
+            message["key"]=str(successor) 
+            message["port"]=str(successorport) 
+            message["type"]= "getsuccessport"
+            message=self.sendmessage(message) #getting key of the successor's successor
+            print("Printing Message")
+            print(message)
+            print("successor key is", message["key"])
+             
+            successor=str(message["key"]) #getting key of the successor's successor
+            successorport=str(message["port"])
+        print("updation completed")
+    
+    def updateallgrandsuccessors(self,message):
+        currentkey=str(self.key)
+        successor=str(self.successor)
+        successorport=str(self.successorport)
+        while currentkey!=successor: #if current key becomes equal to current key, all nodes are updated
+             message["key"]=str(successor) 
+             message["port"]=str(successorport)
+             message["type"]="updategrand" 
+             message=self.sendmessage(message)
+             message["key"]=str(successor) 
+             message["port"]=str(successorport) 
+             message["type"]= "getsuccessport"
+             message=self.sendmessage(message) #getting key of the successor's successor
+             successor=str(message["key"]) #getting key of the successor's successor
+             successorport=str(message["port"])
 
 def main():
 
@@ -193,7 +299,9 @@ def main():
         choice=input("Press 1 if you are a new node, or Press 2 if join existing network?")
         if choice=="1":
             print("I am the first node")
-
+            #mynode.build_fingertable(message)
+            mynode.update_grandsuccessor(message)     
+            mynode.print_values()
         else: 
             destport=input("Which node you want to send request for join")  
             key=int(destport) % max_nodes
@@ -206,10 +314,17 @@ def main():
                 message=mynode.sendmessage(message) 
                 if message['type']=="reply":
                    message=mynode.reply(message)
-            
-
             print("I am added to the system")
+            mynode.update_grandsuccessor(message)      
+            mynode.updateallgrandsuccessors(message)     
             mynode.print_values()
+            #mynode.build_fingertable(message) 
+
+            #mynode.update_fingertables(message)
+                
+        choice=input("If you want to put a file press 1, or else press 2?")
+        
+
 
         while True: 
             listenerthread.join(1) 
