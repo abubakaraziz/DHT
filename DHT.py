@@ -4,6 +4,8 @@ import time
 import sys
 import pickle
 import json
+import hashlib
+import random
 max_nodes=8
 fingertablesize=3
 
@@ -16,7 +18,7 @@ fingertablesize=3
 class node:
     def __init__(self,successor,predecessor,data,fingertable,port):
         self.port=port       
-        self.data=[] 
+        self.filenames=[] 
         self.key=port%max_nodes
         self.successor=self.key 
         self.successorport=self.port
@@ -26,7 +28,10 @@ class node:
         self.predecessorport=self.port
         self.fingertable=[]
 
+
     def print_values(self):
+       print("")
+       print("########")
        print("Printing Node Values")
        print("Port Number is ", self.port) 
        print("Current Node Key is ", self.key) 
@@ -36,14 +41,16 @@ class node:
        print("grandsuccessorport",self.grandsuccessorport)
        print("Predecessor is ", self.predecessor) 
        print("Predecessor Port is ", self.predecessorport)
+       print("Files", self.filenames)
     def print_fingertable(self):
-
+        
+        print("")
         print("Printing Finger Table of Node with key",self.key)
         for i in range(fingertablesize):
             print(self.fingertable[i])
 
     def FindSuccessor(self,message):
-        print("Inside Find Successor") 
+        print("Inside Find Successor")
         if self.successor==self.key:
            message['found']="T"
            #message['successor']=str(self.successor)
@@ -51,8 +58,7 @@ class node:
            message['port']=str(self.port) 
            message['grandsuccessorport']=self.key
         elif self.successor>int(message['otherkey']) and int(message['otherkey'])>=self.key:     #otherkey refers to key of the requested node        
-           message['found']="T"
-           
+           message['found']="T"   
            message['key']=str(self.successor)
            message['port']=str(self.successorport)
            message['grandsuccessorport']=self.grandsuccessorport
@@ -143,9 +149,32 @@ class node:
             elif message["type"]=="updategrand":
                 self.update_grandsuccessor(message)
                 c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="putfile":
+                self.filenames.append(message["filename"])
+                print("File added to the node", self.key)
+                self.print_values()
+                c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="searchfingertable":
+               print("Searching Fingertable of node", self.key)
+               message=self.searchfingertable(message)   
+               c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="getpredecesssor":
+                 print('get predecessor')
+                 message["key"]=self.predecessor
+                 message["port"]=self.predecessorport                  
+                 c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="leaveupdatepred":
+                 print("updating predecessor")
+                 self.successor=int(message["otherkey"]) 
+                 self.successorport=int(message["otherport"])
+                 self.grandsuccessorport=int(message["grand_successor_port"])
                 
-
-
+                 c.send(json.dumps(message).encode('ascii'))
+            elif message["type"]=="leaveupdatesucc":
+                self.predecessor=int(message["otherkey"])
+                self.predecessorport=int(message["otherport"])
+                self.update_grandsuccessor(message)
+                c.send(json.dumps(message).encode('ascii'))
     def update_grandsuccessor(self,message):
         print("Getting GrandSuccessor")
         if self.successor!=self.key:
@@ -163,10 +192,13 @@ class node:
         print('I am node with port', self.port, 'sending message to port, ',message['port'], 'message type', message['type']) 
         messagesentto=message['port']
         s.connect(('localhost',(int(message['port']))))
+        print('connected, sending message')
         s.send(json.dumps(message).encode('ascii'))
+        print('message sent')
         message=s.recv(1024)             #waiting for reply from requested node 
-        message=json.loads(message.decode('ascii')) 
+        message=json.loads(message.decode('ascii'))  
         print('received message from port :', messagesentto , 'message type', message['type']) 
+        print(message)
         s.close()
         return message 
 
@@ -199,41 +231,6 @@ class node:
              message['type']="join"
              return message 
 
-    def build_fingertable(self,message):
-        self.fingertable=[]
-        for i in range(fingertablesize): 
-            message['found']="F" 
-            eachentry={}
-            eachentry['range']=""
-            eachentry['successorkey']=""
-            eachentry['successorport']=""
-            message['key']=str(self.key) #starting node from where to look for the successor
-            message['port']=str(self.port) #starting port from where to look for the port
-            ranges=self.key+2**i
-            message['otherkey']=str(ranges)
-            while message['found']=="F":
-                print('sending message again')
-                print(message)
-                message['type']='nexthighestnodeid'
-                if message['key']==str(self.key):
-                    print("when i am equal to my key")
-                    message=self.FindSuccessor(message)
-                else:
-                    message=self.sendmessage(message)
-                    print("here")
-                    print(message)
-                if message['found']=="F":  #if successor is not found, search from successor 
-                    message['key']=message['key'] #key contains next successor node
-                    message['port']=message['port']
-            print("Finger table entry for id", ranges)
-            eachentry['range']=str(ranges)
-            print('message is', message)
-            eachentry['successorkey']=(message['key'] )
-            eachentry['successorport']=str(message['port'])         
-            self.fingertable.append(eachentry)
-        print("complete fingertable")
-        self.print_fingertable()
-    
     def update_fingertables(self,message):
         currentkey=str(self.key)
         successor=str(self.successor)
@@ -259,6 +256,37 @@ class node:
             successor=str(message["key"]) #getting key of the successor's successor
             successorport=str(message["port"])
         print("updation completed")
+
+ 
+    def update_fingertables_leave(self,message):
+        currentkey=str(message["key"])
+        successor=str(self.successor)
+        print("current key is ", currentkey)
+        print("successor key is", successor)
+        successorport=str(self.successorport)
+        while currentkey!=successor: #if current key becomes equal to current key, all nodes are updated
+            message["key"]=str(successor) 
+            print(" Sending message to ",message["key"])
+            message["port"]=str(successorport) 
+            message["type"]="buildfingertable"
+            message=self.sendmessage(message)
+                       
+            print("Rebuilding of finger table for node with id",str(successor)," completed")
+            message["key"]=str(successor) 
+            message["port"]=str(successorport) 
+            message["type"]= "getsuccessport"
+            message=self.sendmessage(message) #getting key of the successor's successor
+             
+            successor=str(message["key"]) #getting key of the successor's successor
+            successorport=str(message["port"])
+        
+        message["key"]=str(successor) 
+        print(" Sending message to ",message["key"])
+        message["port"]=str(successorport) 
+        message["type"]="buildfingertable"
+        message=self.sendmessage(message)
+                   
+        print("updation completed")
     
     def updateallgrandsuccessors(self,message):
         currentkey=str(self.key)
@@ -275,6 +303,155 @@ class node:
              message=self.sendmessage(message) #getting key of the successor's successor
              successor=str(message["key"]) #getting key of the successor's successor
              successorport=str(message["port"])
+    
+    def computehash(self,filename):
+        sha1=hashlib.sha1()
+        sha1.update(filename.encode('utf-8'))
+        digest=sha1.hexdigest()
+        digest_int=int(digest,16)
+        final=digest_int%max_nodes
+        print(final)
+        return  final
+    #implement Sha-1 
+
+    def searchfingertable(self,message):
+        key=int (message["otherkey"])
+        for i in range(fingertablesize-1): 
+            if self.key==self.successor: 
+                message["key"]=self.key                
+                message["port"]=self.successorport
+                message["found"]="true"
+                return message
+            elif key>=self.predecessor and key<self.key: 
+                message["key"]=self.key                
+                message["port"]=self.port
+                message["found"]="true"
+                return message
+            elif self.predecessor>self.key and key>=self.predecessor: #Ring Ending Condition 
+                message["key"]=self.fingertable[i]["successorkey"]
+                message["port"]=self.fingertable[i]["successorport"]
+                message["found"]="true"
+                return message
+            else:#search for highest id
+                max_id=-1
+                max_index=0
+                for i in range(fingertablesize):
+                    if int(self.fingertable[i]['range'])>max_id and key<=int(self.fingertable[i]['range']):
+                        max_id=int(self.fingertable[i]['range'])
+                        max_index=i
+
+        message["key"]=self.fingertable[max_index]["successorkey"]
+        message["port"]=self.fingertable[max_index]["successorport"]
+        return message            
+    
+    def build_fingertable(self,message):
+        self.fingertable=[]
+        for i in range(fingertablesize): 
+            message['found']="F" 
+            eachentry={}
+            eachentry['range']=""
+            eachentry['successorkey']=""
+            eachentry['successorport']=""
+            message['key']=str(self.key) #starting node from where to look for the successor
+            message['port']=str(self.port) #starting port from where to look for the port
+            ranges=(self.key+2**i) % max_nodes
+            message['otherkey']=str(ranges)
+            while message['found']=="F":
+                print('sending message again')
+                print(message)
+                message['type']='nexthighestnodeid'
+                if message['key']==str(self.key):
+                    print("when i am equal to my key")
+                    message=self.FindSuccessor(message)
+                else:
+                    message=self.sendmessage(message)
+                    print("here")
+                    print(message)
+                if message['found']=="F":  #if successor is not found, search from successor 
+                    message['key']=message['key'] #key contains next successor node
+                    message['port']=message['port']
+            print("Finger table entry for id", ranges)
+            eachentry['range']=str(ranges)
+            print('message is', message)
+            currentkey=message['key'] 
+            currentport=message['port'] 
+            #message['type']='getpredecesssor' 
+            '''message=self.sendmessage(message)
+            if message['key']==str(ranges): 
+                eachentry['successorkey']=str(message['key'])
+                eachentry['successorport']=str(message['port'])
+            else:''' 
+            eachentry['successorkey']=currentkey
+            eachentry['successorport']=currentport        
+            self.fingertable.append(eachentry)
+        print("complete fingertable")
+        self.print_fingertable()
+    
+
+
+
+    def put(self,filename,message,key):
+        hashe=self.computehash(filename)
+        key= hashe 
+        print("Key of the file is", key)
+        message['found']="F"  
+        message['key']=str(self.key) #starting node from where to look for the successor
+        message['port']=str(self.port) #starting port from where to look for the port 
+        message['otherkey']=str(key) # look for node id which is higher than key             
+        while message['found']=="F":
+            message['type']='nexthighestnodeid'
+            if message['key']==str(self.key):
+                message=self.FindSuccessor(message)
+            else:
+                message=self.sendmessage(message)
+            if message['found']=="F":  #if successor is not found, search from successor 
+                message['key']=message['key'] #key contains next successor node
+                message['port']=message['port']
+        print("Found Node with highest id", message["key"])
+        message['type']="putfile"
+        message['filename']=filename
+        
+        print("File Successfully added")
+        self.sendmessage(message)
+        message["type"]="getsuccessport"
+        message=self.sendmessage(message)
+        if message["key"]!=self.key:         
+            message['type']="putfile"
+            message['filename']=filename 
+            self.sendmessage(message)
+        print("Replication Completed on Node ", message["key"])
+
+
+    def leave(self,message):
+        #update my predecessor with successor
+        message["type"]="leaveupdatepred"
+        message["key"]=str(self.predecessor)
+        message["port"]=str(self.predecessorport)
+        message["otherkey"]=str(self.successor)
+        message["otherport"]=str(self.successorport)
+        if self.grandsuccessorport!=self.port:
+            message["grand_successor_port"]=self.grandsuccessorport
+        else:
+            message["grand_successor_port"]=self.predecessorport
+        self.sendmessage(message)
+        #update my successor with predecessor 
+        message["type"]="leaveupdatesucc"
+        message["key"]=str(self.successor)
+        message["port"]=str(self.successorport)
+        message["otherkey"]=str(self.predecessor)
+        message["otherport"]=str(self.predecessorport)
+        self.sendmessage(message)
+
+        #update all fingertables except mine
+        message["key"]=str(self.predecessor)
+        self.update_fingertables_leave(message)
+        
+        #files update
+        for i in range(len(self.filenames)):
+            print('hello')
+        print("leaving")
+
+    
 
 def main():
 
@@ -287,6 +464,7 @@ def main():
             'successor':"",
             'otherport':"",
             'otherkey':"",
+            'filename':"filename",
             }
     MYPORT=int(sys.argv[1]) 
     print("I am a new node and right now i don't know about my successors or predessors ", MYPORT) 
@@ -299,7 +477,7 @@ def main():
         choice=input("Press 1 if you are a new node, or Press 2 if join existing network?")
         if choice=="1":
             print("I am the first node")
-            #mynode.build_fingertable(message)
+            mynode.build_fingertable(message)
             mynode.update_grandsuccessor(message)     
             mynode.print_values()
         else: 
@@ -314,16 +492,33 @@ def main():
                 message=mynode.sendmessage(message) 
                 if message['type']=="reply":
                    message=mynode.reply(message)
-            print("I am added to the system")
             mynode.update_grandsuccessor(message)      
             mynode.updateallgrandsuccessors(message)     
-            mynode.print_values()
-            #mynode.build_fingertable(message) 
+            mynode.build_fingertable(message) 
 
-            #mynode.update_fingertables(message)
-                
-        choice=input("If you want to put a file press 1, or else press 2?")
+            mynode.update_fingertables(message)
+    
+        while choice!="5": 
+            print("Select one of the following Options:")
+            print("1. Add a file")
+            print ("2. Download  a file")
+            print("3.Print FingerTable")
+            print("4.Print All node values")
+            print ("5.Leave Network")
         
+            choice=input("Select your choice from above?")
+            if choice=="1":
+                #key=input("Please enter key of file you want to enter")
+                filename="helloworld" +str(random.randint(0,100))
+                mynode.put(filename,message,100)
+            elif choice=="2":
+                print ("Get a File")
+            elif choice=="3":
+                mynode.print_fingertable()
+            elif choice=="4":
+                mynode.print_values()
+            elif choice=="5":
+                mynode.leave(message)
 
 
         while True: 
