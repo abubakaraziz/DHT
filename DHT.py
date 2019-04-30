@@ -150,6 +150,7 @@ class node:
                 self.update_grandsuccessor(message)
                 c.send(json.dumps(message).encode('ascii'))
             elif message["type"]=="putfile":
+                print("Putting file,",message['filename'], "at port", message["port"])
                 self.filenames.append(message["filename"])
                 print("File added to the node", self.key)
                 self.print_values()
@@ -179,19 +180,22 @@ class node:
                  filename=message["filename"]
                  print('here')
                  f=open(filename,'rb')
-                 l=f.read(1024)
-                 while(l):
-                     message["data"]=l
-                     l=f.read(1024)
-                 c.send(json.dumps(message).encode('ascii'))
+                 line=f.read(1024)
+                 while(line):
+                     c.send((line))
+                     line=f.read(1024)
             elif message["type"]=="ping":
                 c.send(json.dumps(message).encode('ascii'))
             elif message["type"]=="pingupdategrandsuccessor":
+
                 self.predecessor=int(message["otherkey"])
                 self.predecessorport=int(message["otherport"])
                 message["otherkey"]=self.key
                 message["otherport"]=self.port
-                c.send(json.dumps(message).encode('ascii'))
+                c.send(json.dumps(message).encode('ascii')) 
+            elif message["type"]=="updateallfilesingrand":
+                print ('update all filse in grand')
+                
 
     def update_grandsuccessor(self,message):
         #print("Getting GrandSuccessor")
@@ -215,12 +219,11 @@ class node:
                 s.send(json.dumps(message).encode('ascii'))
                 with open(message['filename']+"copy",'wb') as f:
                     while True:                     
-                        message=s.recv(1024) 
-                        message=json.loads(message.decode('ascii'))  
-                        if not message['data']:
+                        line=s.recv(1024) 
+                        if not line:
                             return message
                             break
-                        f.write(data) 
+                        f.write(line) 
             else:
                 #print('connected, sending message')
                 s.send(json.dumps(message).encode('ascii'))
@@ -442,7 +445,7 @@ class node:
             if message['found']=="F":  #if successor is not found, search from successor 
                 message['key']=message['key'] #key contains next successor node
                 message['port']=message['port']
-        #print("Found Node with highest id", message["key"])
+        print("Found Node with highest id", message["key"])
         message['type']="putfile"
         message['filename']=filename
         
@@ -450,12 +453,41 @@ class node:
         self.sendmessage(message)
         message["type"]="getsuccessport"
         message=self.sendmessage(message)
-        if message["key"]!=self.key:         
-            message['type']="putfile"
-            message['filename']=filename 
-            self.sendmessage(message)
-        #print("Replication Completed on Node ", message["key"])
+        message['type']="putfile"
+        message['filename']=filename 
+        self.sendmessage(message)
+        print("Replication Completed on Node ", message["key"])
     
+             
+    def put_whenleave(self,filename,message):
+        hashe=self.computehash(filename)
+        key= hashe 
+        #print("Key of the file is", key)
+        message['found']="F"  
+        #message['key']=str(self.key) #starting node from where to look for the successor
+        #message['port']=str(self.port) #starting port from where to look for the port 
+        message['otherkey']=str(key) # look for node id which is higher than key             
+        while message['found']=="F":
+            message['type']='nexthighestnodeid'
+            if message['key']==str(self.key):
+                message=self.FindSuccessor(message)
+            else:
+                message=self.sendmessage(message)
+            if message['found']=="F":  #if successor is not found, search from successor 
+                message['key']=message['key'] #key contains next successor node
+                message['port']=message['port']
+        print("Found Node with highest id", message["key"])
+        message['type']="putfile"
+        message['filename']=filename 
+        #print("File Successfully added")
+        self.sendmessage(message)
+        message["type"]="getsuccessport"
+        message=self.sendmessage(message)
+        message['type']="putfile"
+        message['filename']=filename 
+        self.sendmessage(message)
+        print("Replication Completed on Node ", message["key"])
+
     def download(self,filename,message):
         hashe=self.computehash(filename)
         key= hashe 
@@ -505,10 +537,13 @@ class node:
         message["key"]=str(self.predecessor)
         self.update_fingertables_leave(message)
         
-        #files update
+        #Save files in leave node to some other node
         for i in range(len(self.filenames)):
-            print('hello')
-        #print("leaving")
+            message['key']=str(self.predecessor)
+            message['port']=str(self.predecessorport)
+            self.put_whenleave(self.filenames[i],message)
+               
+        print("Complted Replication on other nodes")
 
     def ping_successor(self,message):
         threading.Timer(2.0,self.ping_successor,[message]).start()
@@ -522,7 +557,7 @@ class node:
                 if self.port!=self.grandsuccessorport: #Condition if more than 2 nodes available in the network
                     #print ("Successor has left")
                     #print("Updating my successor")
-                    message["type"]="pingupdategrandsuccessor"
+                    message["type"]="pingupdategrandsuccessor" #also replicate all the files in grandsuccessor port
                     message["key"]=str(self.grandsuccessorkey)#send message to grandsuccessor port
                     message["port"]=str(self.grandsuccessorport)
                     message["otherkey"]=self.key
@@ -543,7 +578,15 @@ class node:
                 #Updating my fingertable
                 self.build_fingertable(message) 
                 #Updating all other fingertables
-                self.update_fingertables(message) 
+                self.update_fingertables(message)
+                #updatefiles in grandsuccessor
+                
+                message["type"]="pingupdategrandsuccessor" #also replicate all the files in grandsuccessor port
+                message["key"]=str(self.grandsuccessorkey)#send message to grandsuccessor port
+                message["port"]=str(self.grandsuccessorport)
+
+
+                
             
 
 def main():
