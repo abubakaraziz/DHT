@@ -6,6 +6,8 @@ import pickle
 import json
 import hashlib
 import random
+import shutil
+import os
 max_nodes=8
 fingertablesize=3
 
@@ -150,7 +152,12 @@ class node:
                 self.update_grandsuccessor(message)
                 c.send(json.dumps(message).encode('ascii'))
             elif message["type"]=="putfile":
+
                 print("Putting file,",message['filename'], "at port", message["port"])
+                print (message)
+                src=message['filename']
+                dest=str(self.port)+'/'+message['filename']
+                shutil.copy2(src,dest)
                 self.filenames.append(message["filename"])
                 print("File added to the node", self.key)
                 self.print_values()
@@ -177,9 +184,13 @@ class node:
                 self.update_grandsuccessor(message)
                 c.send(json.dumps(message).encode('ascii'))
             elif message["type"]=="downloadfile":
-                 filename=message["filename"]
-                 print('here')
-                 f=open(filename,'rb')
+                 script_dir=os.path.dirname(__file__)
+                 rel_path=message["port"]+'/'+message["filename"]
+                 print (rel_path)
+                 abs_file_path=os.path.join(script_dir,rel_path)
+                 statinfo=os.stat(rel_path)
+                 print ('size is',statinfo.st_size)
+                 f=open(abs_file_path,'rb')
                  line=f.read(1024)
                  while(line):
                      c.send((line))
@@ -216,8 +227,14 @@ class node:
         try:
             s.connect(('localhost',(int(message['port']))))
             if message["type"]=="downloadfile":
+                
+                script_dir=os.path.dirname(__file__)
+                rel_path=str(self.port)+'/'+message["filename"]
+                print (rel_path)
+                abs_file_path=os.path.join(script_dir,rel_path) 
+                print('download file from port', message['port'])
                 s.send(json.dumps(message).encode('ascii'))
-                with open(message['filename']+"copy",'wb') as f:
+                with open(rel_path,'wb') as f:
                     while True:                     
                         line=s.recv(1024) 
                         if not line:
@@ -273,24 +290,22 @@ class node:
         currentkey=str(self.key)
         successor=str(self.successor)
         #print("current key is ", currentkey)
-        #print("successor key is", successor)
-        successorport=str(self.successorport)
-        while currentkey!=successor: #if current key becomes equal to current key, all nodes are updated
+        #print("successor key is", successor) 
+        successorport=str(self.successorport) 
+        while currentkey!=successor: #if current key becomes equal to current key, all nodes are updated 
             message["key"]=str(successor) 
-            #print(" Sending message to ",message["key"])
+            #print(" Sending message to ",message["key"]) 
             message["port"]=str(successorport) 
-            message["type"]="buildfingertable"
-            message=self.sendmessage(message)
-                       
-            #print("Rebuilding of finger table for node with id",str(successor)," completed")
-            message["key"]=str(successor) 
+            message["type"]="buildfingertable" 
+            message=self.sendmessage(message) 
+            #print("Rebuilding of finger table for node with id",str(successor)," completed") 
+            message["key"]=str(successor)
             message["port"]=str(successorport) 
-            message["type"]= "getsuccessport"
-            message=self.sendmessage(message) #getting key of the successor's successor
-            #print("Printing Message")
-            #print(message)
-            #print("successor key is", message["key"])
-             
+            message["type"]= "getsuccessport" 
+            message=self.sendmessage(message) #getting key of the successor's successor 
+            #print("Printing Message") 
+            #print(message) 
+            #print("successor key is", message["key"])  
             successor=str(message["key"]) #getting key of the successor's successor
             successorport=str(message["port"])
         #print("updation completed")
@@ -431,7 +446,7 @@ class node:
     def put(self,filename,message):
         hashe=self.computehash(filename)
         key= hashe 
-        #print("Key of the file is", key)
+        print("Key of the file is", key)
         message['found']="F"  
         message['key']=str(self.key) #starting node from where to look for the successor
         message['port']=str(self.port) #starting port from where to look for the port 
@@ -449,7 +464,7 @@ class node:
         message['type']="putfile"
         message['filename']=filename
         
-        #print("File Successfully added")
+        print("File Successfully added")
         self.sendmessage(message)
         message["type"]="getsuccessport"
         message=self.sendmessage(message)
@@ -470,13 +485,14 @@ class node:
         while message['found']=="F":
             message['type']='nexthighestnodeid'
             if message['key']==str(self.key):
+                print ('value of message is',message['key'])
                 message=self.FindSuccessor(message)
             else:
                 message=self.sendmessage(message)
             if message['found']=="F":  #if successor is not found, search from successor 
                 message['key']=message['key'] #key contains next successor node
                 message['port']=message['port']
-        print("Found Node with highest id", message["key"])
+        print("inside put_whenleave Found Node with highest id", message["key"])
         message['type']="putfile"
         message['filename']=filename 
         #print("File Successfully added")
@@ -505,7 +521,7 @@ class node:
             if message['found']=="F":  #if successor is not found, search from successor 
                 message['key']=message['key'] #key contains next successor node
                 message['port']=message['port']
-        #print("Found Node with highest id", message["key"])
+        print("Found Node with highest id while downloading", message["key"])
         message['type']="downloadfile"
         message['filename']=filename 
         self.sendmessage(message) 
@@ -602,6 +618,7 @@ def main():
             'otherkey':"",
             'filename':"",
             'data':"",
+            'filesize':"",
             }
     MYPORT=int(sys.argv[1]) 
     #print("I am a new node and right now i don't know about my successors or predessors ", MYPORT) 
@@ -637,6 +654,7 @@ def main():
             mynode.ping_successor(message)
     
         while choice!="5": 
+            print ("###############################################################################")
             print("Select one of the following Options:")
             print("1. Add a file")
             print ("2. Download  a file")
@@ -645,6 +663,8 @@ def main():
             print ("5.Leave Network")
         
             choice=input("Select your choice from above?")
+
+            print ("###############################################################################")
             if choice=="1":
                 filename=input("Please enter filename ")
                 #filename="helloworld" +str(random.randint(0,100))
